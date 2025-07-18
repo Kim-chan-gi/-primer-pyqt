@@ -42,11 +42,11 @@ def design_primers(full_seq, target_seq, primer_length=20):
 
     end_pos = start_pos + len(target_seq) - 1
 
-    if start_pos + primer_length > len(full_seq) or end_pos - primer_length + 1 < 0:
-        raise ValueError("❌ 프라이머 길이에 맞게 충분한 여유가 없습니다.")
+    if start_pos < primer_length or end_pos + primer_length >= len(full_seq):
+        raise ValueError("❌ 프라이머 길이에 맞게 타겟 앞뒤 여유 공간이 부족합니다.")
 
-    f_primer = full_seq[start_pos : start_pos + primer_length]
-    r_primer_raw = full_seq[end_pos - primer_length + 1 : end_pos + 1]
+    f_primer = full_seq[start_pos - primer_length : start_pos]
+    r_primer_raw = full_seq[end_pos + 1 : end_pos + 1 + primer_length]
     r_primer = reverse_complement(r_primer_raw)
 
     tm_f = calc_tm(f_primer)
@@ -64,7 +64,7 @@ def design_primers(full_seq, target_seq, primer_length=20):
     if has_self_complementarity(f_primer) or has_self_complementarity(r_primer):
         raise ValueError("❗ 프라이머 중 self-complementary 구조(헤어핀 또는 이량체) 가능성이 있습니다.")
 
-    amplicon_length = end_pos - start_pos + 1
+    amplicon_length = end_pos + primer_length - (start_pos - primer_length) + 1
 
     return [
         ("Forward", f_primer, len(f_primer), calc_gc_content(f_primer),
