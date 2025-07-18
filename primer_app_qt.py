@@ -160,7 +160,7 @@ class PrimerApp(QWidget):
             r_len = self.r_len.value()
             enzyme = self.enzyme_box.currentText()
             if enzyme != "없음" and enzyme in enzyme_dict:
-            insert_side = self.side_box.currentText()
+                insert_side = self.side_box.currentText()
 
             result = design_primers(full_seq, target_seq, f_len, r_len, enzyme, insert_side)
             self.table.setRowCount(len(result))
