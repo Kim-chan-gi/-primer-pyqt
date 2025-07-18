@@ -17,6 +17,7 @@ from PyQt5.QtCore import Qt
 
 # ===== 제한효소 데이터 =====
 RESTRICTION_ENZYMES = {
+    "없음": "",
     "EcoRI": "GAATTC",
     "BamHI": "GGATCC",
     "XhoI": "CTCGAG",
