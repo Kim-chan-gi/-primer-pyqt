@@ -1,6 +1,7 @@
-
-import streamlit as st
-import pandas as pd
+import sys
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QTextEdit, QVBoxLayout, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem
+)
 import re
 
 def reverse_complement(seq):
