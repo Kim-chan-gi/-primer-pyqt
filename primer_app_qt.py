@@ -5,117 +5,88 @@ from PyQt5.QtWidgets import (
     QPushButton, QSpinBox, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox, QLineEdit
 )
 from PyQt5.QtGui import QFont
+import math
 
 # ===== 유틸리티 함수 =====
 def reverse_complement(seq):
     return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
 
 def calc_gc_content(seq):
-    gc_count = sum(1 for base in seq.upper() if base in "GC")
+    seq = seq.upper()
+    gc_count = seq.count("G") + seq.count("C")
     return round((gc_count / len(seq)) * 100, 2)
 
 def calc_tm(seq):
     seq = seq.upper()
-    return 2 * (seq.count("A") + seq.count("T")) + 4 * (seq.count("G") + seq.count("C")) - 5
+    n = len(seq)
+    gc = seq.count("G") + seq.count("C")
+    at = seq.count("A") + seq.count("T")
+    if n <= 14:
+        return 4 * gc + 2 * at
+    else:
+        return round(64.9 + 41 * (gc - 16.4) / n, 2)
 
 def check_gc_clamp(seq):
-    return 1 <= sum(1 for base in seq[-5:] if base in "GC") <= 2
+    return seq[-1] in "GC"
 
 def check_repeat(seq):
-    return bool(re.search(r"(AT){3,}|(TA){3,}|A{5,}|T{5,}|G{5,}|C{5,}", seq))
+    return bool(re.search(r"(.)\1{4,}", seq))
 
-def is_primer_unique(seq, primer):
-    return seq.count(primer) == 1
+def has_self_complementarity(seq):
+    rev = reverse_complement(seq)
+    for i in range(4, 7):
+        if rev[:i] in seq or rev[-i:] in seq:
+            return True
+    return False
 
-def has_self_complementarity(primer):
-    rev_comp = reverse_complement(primer)
-    return any(rev_comp[i:i+4] in primer for i in range(len(primer) - 3))
-
-def check_start_stop_codon(seq):
-    start = seq.startswith("ATG")
-    stop = seq[-3:] in ["TAA", "TAG", "TGA"]
-    return start, stop
-
-# 기본 제한효소 사전
-DEFAULT_RE_SITES = {
-    "(없음)": "",
-    "EcoRI (GAATTC)": "GAATTC",
-    "XhoI (CTCGAG)": "CTCGAG",
-    "BamHI (GGATCC)": "GGATCC",
-    "HindIII (AAGCTT)": "AAGCTT",
-    "NotI (GCGGCCGC)": "GCGGCCGC",
-    "SalI (GTCGAC)": "GTCGAC",
-    "NheI (GCTAGC)": "GCTAGC"
-}
+def is_valid_gc_content(seq):
+    gc = calc_gc_content(seq)
+    return 40 <= gc <= 60
 
 # ===== 프라이머 설계 함수 =====
-def design_primers(full_seq, target_seq, primer_length=20, enzyme_f="", enzyme_r=""):
+def design_strict_primers(full_seq, target_seq, primer_length=20):
     full_seq = re.sub(r"\s+", "", full_seq.upper())
     target_seq = re.sub(r"\s+", "", target_seq.upper())
 
-    start_pos = full_seq.find(target_seq)
-    if start_pos == -1:
-        raise ValueError("❌ 표적 서열이 전체 유전자 서열에 존재하지 않습니다.")
+    start = full_seq.find(target_seq)
+    if start == -1:
+        raise ValueError("❌ 전체 서열에서 타겟 서열을 찾을 수 없습니다.")
+    end = start + len(target_seq)
 
-    end_pos = start_pos + len(target_seq) - 1
+    if start < 0 or end + primer_length > len(full_seq):
+        raise ValueError("❌ 프라이머를 설계하기에 충분한 영역이 없습니다.")
 
-    if start_pos < primer_length or end_pos + primer_length >= len(full_seq):
-        raise ValueError("❌ 프라이머 길이에 맞게 타겟 앞뒤 여유 공간이 부족합니다.")
+    f_primer = full_seq[start : start + primer_length]
+    r_raw = full_seq[end - primer_length : end]
+    r_primer = reverse_complement(r_raw)
 
-    f_core = full_seq[start_pos - primer_length : start_pos]
-    r_core_raw = full_seq[end_pos + 1 : end_pos + 1 + primer_length]
-    r_core = reverse_complement(r_core_raw)
+    f_tm = calc_tm(f_primer)
+    r_tm = calc_tm(r_primer)
 
-    # 제한효소 서열 추가 및 클로닝용 spacer 추가
-    spacer = "GCGG"  # universal clamp for enzyme site
-    f_primer = spacer + enzyme_f + f_core if enzyme_f else f_core
-    r_primer = spacer + enzyme_r + r_core if enzyme_r else r_core
+    f_gc = calc_gc_content(f_primer)
+    r_gc = calc_gc_content(r_primer)
 
-    tm_f = calc_tm(f_core)
-    tm_r = calc_tm(r_core)
+    f_warn, r_warn = [], []
+    if not is_valid_gc_content(f_primer): f_warn.append("⚠ GC% 비정상")
+    if not is_valid_gc_content(r_primer): r_warn.append("⚠ GC% 비정상")
+    if not check_gc_clamp(f_primer): f_warn.append("⚠ 3' 끝에 G/C 없음")
+    if not check_gc_clamp(r_primer): r_warn.append("⚠ 3' 끝에 G/C 없음")
+    if check_repeat(f_primer): f_warn.append("⚠ 반복염기")
+    if check_repeat(r_primer): r_warn.append("⚠ 반복염기")
+    if has_self_complementarity(f_primer): f_warn.append("⚠ 자기 상보성")
+    if has_self_complementarity(r_primer): r_warn.append("⚠ 자기 상보성")
 
-    warning_messages = []
-
-    has_start, has_stop = check_start_stop_codon(target_seq)
-    if not has_start:
-        warning_messages.append("⚠️ 표적 서열에 Start codon(ATG)이 없습니다.")
-    if not has_stop:
-        warning_messages.append("⚠️ 표적 서열에 Stop codon(TAA/TAG/TGA)이 없습니다.")
-    if len(target_seq) % 3 != 0:
-        warning_messages.append("⚠️ 표적 서열이 번역 프레임(3의 배수)을 유지하지 않습니다.")
-
-    if abs(tm_f - tm_r) > 5:
-        warning_messages.append("⚠️ Tm 차이가 큽니다 (권장 ≤ 5℃)")
-    if not is_primer_unique(full_seq, f_core):
-        warning_messages.append("⚠️ Forward 프라이머가 유전자 내 여러 위치에 존재합니다.")
-    if not is_primer_unique(full_seq, reverse_complement(r_core)):
-        warning_messages.append("⚠️ Reverse 프라이머가 유전자 내 여러 위치에 존재합니다.")
-    if has_self_complementarity(f_core):
-        warning_messages.append("⚠️ Forward 프라이머에 self-complementary 구조 가능성")
-    if has_self_complementarity(r_core):
-        warning_messages.append("⚠️ Reverse 프라이머에 self-complementary 구조 가능성")
-
-    amplicon_length = end_pos + primer_length - (start_pos - primer_length) + 1
-
-    result = [
-        ("Forward", f_primer, len(f_primer), calc_gc_content(f_core),
-         tm_f, check_gc_clamp(f_core), check_repeat(f_core), "Yes" if is_primer_unique(full_seq, f_core) else "No"),
-
-        ("Reverse", r_primer, len(r_primer), calc_gc_content(r_core),
-         tm_r, check_gc_clamp(r_core), check_repeat(r_core), "Yes" if is_primer_unique(full_seq, reverse_complement(r_core)) else "No"),
-
-        ("Amplicon Length", amplicon_length, "", "", "", "", "", "")
+    return [
+        ("Forward", f_primer, len(f_primer), f_gc, f_tm, ", ".join(f_warn) or "OK"),
+        ("Reverse", r_primer, len(r_primer), r_gc, r_tm, ", ".join(r_warn) or "OK")
     ]
 
-    return result, warning_messages
-
-# ===== UI 앱 클래스 =====
+# ===== UI 앱 =====
 class PrimerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🧬 클로닝용 PCR 프라이머 설계기")
-        self.resize(750, 800)
-
+        self.setWindowTitle("🧬 고정밀 PCR 프라이머 설계기")
+        self.resize(750, 600)
         layout = QVBoxLayout()
         font = QFont("Courier New", 10)
 
@@ -130,55 +101,32 @@ class PrimerApp(QWidget):
         layout.addWidget(self.target_input)
 
         self.len_input = QSpinBox()
-        self.len_input.setRange(10, 40)
+        self.len_input.setRange(15, 40)
         self.len_input.setValue(20)
-        layout.addWidget(QLabel("프라이머 길이 (10~40):"))
+        layout.addWidget(QLabel("프라이머 길이 (15~40):"))
         layout.addWidget(self.len_input)
-
-        self.enzyme_f_input = QComboBox()
-        self.enzyme_f_input.addItems(DEFAULT_RE_SITES.keys())
-        layout.addWidget(QLabel("Forward 제한효소 (선택):"))
-        layout.addWidget(self.enzyme_f_input)
-        self.custom_f = QLineEdit()
-        self.custom_f.setPlaceholderText("사용자 정의 Forward 제한효소 서열 (예: GCGGCCGC)")
-        layout.addWidget(self.custom_f)
-
-        self.enzyme_r_input = QComboBox()
-        self.enzyme_r_input.addItems(DEFAULT_RE_SITES.keys())
-        layout.addWidget(QLabel("Reverse 제한효소 (선택):"))
-        layout.addWidget(self.enzyme_r_input)
-        self.custom_r = QLineEdit()
-        self.custom_r.setPlaceholderText("사용자 정의 Reverse 제한효소 서열 (예: GTCGAC)")
-        layout.addWidget(self.custom_r)
 
         self.button = QPushButton("프라이머 생성")
         self.button.clicked.connect(self.generate_primers)
         layout.addWidget(self.button)
 
-        self.table = QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(
-            ["Primer", "Sequence", "Length", "GC_Content", "Tm", "GC_Clamp", "Repeats", "Unique"]
-        )
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Primer", "Sequence", "Length", "GC%", "Tm", "Warnings"])
         layout.addWidget(self.table)
 
         self.setLayout(layout)
 
     def generate_primers(self):
-        full_seq = self.seq_input.toPlainText()
-        target_seq = self.target_input.toPlainText()
-        primer_len = self.len_input.value()
-
-        enzyme_f = self.custom_f.text().strip() or DEFAULT_RE_SITES[self.enzyme_f_input.currentText()]
-        enzyme_r = self.custom_r.text().strip() or DEFAULT_RE_SITES[self.enzyme_r_input.currentText()]
+        seq = self.seq_input.toPlainText()
+        target = self.target_input.toPlainText()
+        length = self.len_input.value()
 
         try:
-            results, warnings = design_primers(full_seq, target_seq, primer_len, enzyme_f, enzyme_r)
+            results = design_strict_primers(seq, target, length)
             self.table.setRowCount(len(results))
             for i, row in enumerate(results):
                 for j, val in enumerate(row):
                     self.table.setItem(i, j, QTableWidgetItem(str(val)))
-            if warnings:
-                QMessageBox.warning(self, "주의 사항", "\n".join(warnings))
         except Exception as e:
             QMessageBox.critical(self, "에러", str(e))
 
