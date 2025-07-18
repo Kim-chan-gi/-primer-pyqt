@@ -1,4 +1,4 @@
-name: Build PyQt App EXE
+name: Build PyQt GUI EXE (No Console)
 
 on:
   push:
@@ -19,11 +19,11 @@ jobs:
         run: |
           pip install pyinstaller pyqt5
 
-      - name: Build .exe
+      - name: Build .exe without console
         run: |
-          pyinstaller --noconfirm --onefile primer_app_qt.py
+          pyinstaller --noconfirm --onefile --windowed primer_app_qt.py
 
-      - name: Upload EXE artifact
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: primer_app_qt_exe
