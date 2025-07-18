@@ -52,21 +52,26 @@ def design_primers(full_seq, target_seq, primer_length=20):
     tm_f = calc_tm(f_primer)
     tm_r = calc_tm(r_primer)
 
+    warning_messages = []
+
     if abs(tm_f - tm_r) > 5:
-        raise ValueError("❗ Forward/Reverse 프라이머 Tm 차이가 너무 큽니다 (권장 ≤ 5℃).")
+        warning_messages.append("⚠️ Tm 차이가 큽니다 (권장 ≤ 5℃)")
 
     if not is_primer_unique(full_seq, f_primer):
-        raise ValueError("❗ Forward Primer가 유전자 내 여러 위치에 존재합니다.")
+        warning_messages.append("⚠️ Forward 프라이머가 유전자 내 여러 위치에 존재합니다.")
 
     if not is_primer_unique(full_seq, reverse_complement(r_primer)):
-        raise ValueError("❗ Reverse Primer가 유전자 내 여러 위치에 존재합니다.")
+        warning_messages.append("⚠️ Reverse 프라이머가 유전자 내 여러 위치에 존재합니다.")
 
-    if has_self_complementarity(f_primer) or has_self_complementarity(r_primer):
-        raise ValueError("❗ 프라이머 중 self-complementary 구조(헤어핀 또는 이량체) 가능성이 있습니다.")
+    if has_self_complementarity(f_primer):
+        warning_messages.append("⚠️ Forward 프라이머에 self-complementary 구조 가능성")
+
+    if has_self_complementarity(r_primer):
+        warning_messages.append("⚠️ Reverse 프라이머에 self-complementary 구조 가능성")
 
     amplicon_length = end_pos + primer_length - (start_pos - primer_length) + 1
 
-    return [
+    result = [
         ("Forward", f_primer, len(f_primer), calc_gc_content(f_primer),
          tm_f, check_gc_clamp(f_primer), check_repeat(f_primer), "Yes" if is_primer_unique(full_seq, f_primer) else "No"),
 
@@ -76,11 +81,13 @@ def design_primers(full_seq, target_seq, primer_length=20):
         ("Amplicon Length", amplicon_length, "", "", "", "", "", "")
     ]
 
+    return result, warning_messages
+
 # ===== UI 앱 클래스 =====
 class PrimerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🧬 전문가용 PCR 프라이머 설계기")
+        self.setWindowTitle("🧬 PCR 프라이머 생성")
         self.resize(750, 650)
 
         layout = QVBoxLayout()
@@ -120,13 +127,15 @@ class PrimerApp(QWidget):
         primer_len = self.len_input.value()
 
         try:
-            results = design_primers(full_seq, target_seq, primer_len)
+            results, warnings = design_primers(full_seq, target_seq, primer_len)
             self.table.setRowCount(len(results))
             for i, row in enumerate(results):
                 for j, val in enumerate(row):
                     self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            if warnings:
+                QMessageBox.warning(self, "주의 사항", "\n".join(warnings))
         except Exception as e:
-            QMessageBox.warning(self, "에러", str(e))
+            QMessageBox.critical(self, "에러", str(e))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
