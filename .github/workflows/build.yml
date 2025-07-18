@@ -1,0 +1,30 @@
+name: Build PyQt App EXE
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pyqt5
+
+      - name: Build .exe
+        run: |
+          pyinstaller --noconfirm --onefile primer_app_qt.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: primer_app_qt_exe
+          path: dist/primer_app_qt.exe
