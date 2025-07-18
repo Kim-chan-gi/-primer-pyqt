@@ -2,8 +2,9 @@ import sys
 import re
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QTextEdit, QVBoxLayout,
-    QPushButton, QSpinBox, QTableWidget, QTableWidgetItem
+    QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
+from PyQt5.QtGui import QFont
 
 # ===== 유틸리티 함수 =====
 def reverse_complement(seq):
@@ -23,6 +24,13 @@ def check_gc_clamp(seq):
 def check_repeat(seq):
     return bool(re.search(r"(AT){3,}|(TA){3,}|A{5,}|T{5,}|G{5,}|C{5,}", seq))
 
+def is_primer_unique(seq, primer):
+    return seq.count(primer) == 1
+
+def has_self_complementarity(primer):
+    rev_comp = reverse_complement(primer)
+    return any(rev_comp[i:i+4] in primer for i in range(len(primer) - 3))
+
 # ===== 프라이머 설계 함수 =====
 def design_primers(full_seq, target_seq, primer_length=20):
     full_seq = re.sub(r"\s+", "", full_seq.upper())
@@ -34,59 +42,73 @@ def design_primers(full_seq, target_seq, primer_length=20):
 
     end_pos = start_pos + len(target_seq) - 1
 
-    # 양쪽 프라이머 길이가 확보 가능한지 검사
     if start_pos + primer_length > len(full_seq) or end_pos - primer_length + 1 < 0:
         raise ValueError("❌ 프라이머 길이에 맞게 충분한 여유가 없습니다.")
 
-    # Forward Primer: 타겟의 시작 위치부터
     f_primer = full_seq[start_pos : start_pos + primer_length]
-
-    # Reverse Primer: 타겟의 끝 포함해 그 앞에서 primer_length 추출 → 역상보
     r_primer_raw = full_seq[end_pos - primer_length + 1 : end_pos + 1]
     r_primer = reverse_complement(r_primer_raw)
 
+    tm_f = calc_tm(f_primer)
+    tm_r = calc_tm(r_primer)
+
+    if abs(tm_f - tm_r) > 5:
+        raise ValueError("❗ Forward/Reverse 프라이머 Tm 차이가 너무 큽니다 (권장 ≤ 5℃).")
+
+    if not is_primer_unique(full_seq, f_primer):
+        raise ValueError("❗ Forward Primer가 유전자 내 여러 위치에 존재합니다.")
+
+    if not is_primer_unique(full_seq, reverse_complement(r_primer)):
+        raise ValueError("❗ Reverse Primer가 유전자 내 여러 위치에 존재합니다.")
+
+    if has_self_complementarity(f_primer) or has_self_complementarity(r_primer):
+        raise ValueError("❗ 프라이머 중 self-complementary 구조(헤어핀 또는 이량체) 가능성이 있습니다.")
+
+    amplicon_length = end_pos - start_pos + 1
+
     return [
         ("Forward", f_primer, len(f_primer), calc_gc_content(f_primer),
-         calc_tm(f_primer), check_gc_clamp(f_primer), check_repeat(f_primer)),
+         tm_f, check_gc_clamp(f_primer), check_repeat(f_primer), "Yes" if is_primer_unique(full_seq, f_primer) else "No"),
+
         ("Reverse", r_primer, len(r_primer), calc_gc_content(r_primer),
-         calc_tm(r_primer), check_gc_clamp(r_primer), check_repeat(r_primer)),
+         tm_r, check_gc_clamp(r_primer), check_repeat(r_primer), "Yes" if is_primer_unique(full_seq, reverse_complement(r_primer)) else "No"),
+
+        ("Amplicon Length", amplicon_length, "", "", "", "", "", "")
     ]
 
 # ===== UI 앱 클래스 =====
 class PrimerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🧬 PCR 프라이머 설계기")
-        self.resize(700, 600)
+        self.setWindowTitle("🧬 전문가용 PCR 프라이머 설계기")
+        self.resize(750, 650)
 
         layout = QVBoxLayout()
+        font = QFont("Courier New", 10)
 
-        # 전체 유전자 서열 입력
         layout.addWidget(QLabel("전체 유전자 서열 (5'→3')"))
         self.seq_input = QTextEdit()
+        self.seq_input.setFont(font)
         layout.addWidget(self.seq_input)
 
-        # 타겟 서열 입력
         layout.addWidget(QLabel("표적 DNA 서열"))
         self.target_input = QTextEdit()
+        self.target_input.setFont(font)
         layout.addWidget(self.target_input)
 
-        # 프라이머 길이 입력
         self.len_input = QSpinBox()
         self.len_input.setRange(10, 40)
         self.len_input.setValue(20)
         layout.addWidget(QLabel("프라이머 길이 (10~40):"))
         layout.addWidget(self.len_input)
 
-        # 버튼
         self.button = QPushButton("프라이머 생성")
         self.button.clicked.connect(self.generate_primers)
         layout.addWidget(self.button)
 
-        # 출력 테이블
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Primer", "Sequence", "Length", "GC_Content", "Tm", "GC_Clamp", "Repeats"]
+            ["Primer", "Sequence", "Length", "GC_Content", "Tm", "GC_Clamp", "Repeats", "Unique"]
         )
         layout.addWidget(self.table)
 
@@ -104,10 +126,8 @@ class PrimerApp(QWidget):
                 for j, val in enumerate(row):
                     self.table.setItem(i, j, QTableWidgetItem(str(val)))
         except Exception as e:
-            self.table.setRowCount(1)
-            self.table.setItem(0, 0, QTableWidgetItem("⚠️ " + str(e)))
+            QMessageBox.warning(self, "에러", str(e))
 
-# ===== 실행 진입점 =====
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = PrimerApp()
